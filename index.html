@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ラグビー物理タックルシミュレーター</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --text: #f8fafc;
+      --sub: #94a3b8;
+      --accent: #38bdf8;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --green: #22c55e;
+      --amber: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 15px;
+      font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", sans-serif;
+      background-color: var(--bg); color: var(--text);
+    }
+    .container { max-width: 1050px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
+    
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      background: var(--panel); padding: 12px 20px; border-radius: 10px;
+      border-left: 5px solid var(--accent);
+    }
+    header h1 { margin: 0; font-size: 1.3rem; display: flex; align-items: center; gap: 8px; }
+    .preset-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn-preset {
+      background: #334155; color: var(--text); border: 1px solid #475569;
+      padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; transition: 0.2s;
+    }
+    .btn-preset:hover { background: #475569; border-color: var(--accent); }
+
+    /* キャンバスエリア */
+    .stage-wrapper {
+      position: relative; background: #000; border-radius: 12px; overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 2px solid #334155;
+    }
+    canvas { display: block; width: 100%; height: auto; }
+    
+    /* オーバーレイUI */
+    .hud-top {
+      position: absolute; top: 12px; left: 15px; right: 15px;
+      display: flex; justify-content: space-between; pointer-events: none;
+    }
+    .hud-box {
+      background: rgba(15, 23, 42, 0.85); padding: 8px 14px; border-radius: 8px;
+      font-size: 0.85rem; border: 1px solid rgba(255,255,255,0.15);
+    }
+    .result-banner {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: rgba(15, 23, 42, 0.92); padding: 18px 30px; border-radius: 12px;
+      text-align: center; border: 2px solid var(--accent); display: none;
+      box-shadow: 0 0 30px rgba(0,0,0,0.8); pointer-events: none;
+    }
+    .result-title { font-size: 1.8rem; font-weight: 900; margin-bottom: 5px; letter-spacing: 1px; }
+    .result-detail { font-size: 0.95rem; color: #cbd5e1; line-height: 1.5; }
+
+    /* コントロールパネル */
+    .controls-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 15px;
+    }
+    @media (max-width: 850px) {
+      .controls-grid { grid-template-columns: 1fr; }
+      header { flex-direction: column; align-items: flex-start; gap: 10px; }
+    }
+    .card {
+      background: var(--panel); padding: 15px; border-radius: 10px;
+      border-top: 4px solid #475569;
+    }
+    .card.attacker { border-top-color: var(--red); }
+    .card.tackler { border-top-color: var(--blue); }
+    .card.tech { border-top-color: var(--amber); }
+    
+    .card h3 { margin: 0 0 12px 0; font-size: 1rem; display: flex; justify-content: space-between; }
+    .control-row { margin-bottom: 12px; }
+    .control-row:last-child { margin-bottom: 0; }
+    .control-row label {
+      display: flex; justify-content: space-between; font-size: 0.85rem;
+      color: var(--sub); margin-bottom: 4px; font-weight: bold;
+    }
+    .control-row span.val { color: var(--text); font-family: monospace; font-size: 0.95rem; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+    .card.attacker input[type="range"] { accent-color: var(--red); }
+    .card.tackler input[type="range"] { accent-color: var(--blue); }
+    .card.tech input[type="range"] { accent-color: var(--amber); }
+
+    .action-bar {
+      display: flex; gap: 12px; align-items: center; background: var(--panel);
+      padding: 15px; border-radius: 10px;
+    }
+    .btn-main {
+      flex: 1; background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: white; border: none; padding: 14px; font-size: 1.2rem; font-weight: bold;
+      border-radius: 8px; cursor: pointer; box-shadow: 0 4px 12px rgba(37,99,235,0.4);
+      transition: transform 0.1s, background 0.2s;
+    }
+    .btn-main:hover { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+    .btn-main:active { transform: scale(0.99); }
+    .toggle-group { display: flex; gap: 12px; align-items: center; font-size: 0.9rem; }
+    .toggle-group label { cursor: pointer; display: flex; align-items: center; gap: 5px; user-select: none; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>🏉 物理演算タックルシミュレーター v1.0</h1>
+    <div class="preset-btns">
+      <button class="btn-preset" onclick="applyPreset('giantKilling')">🔥 ジャイアントキリング (70kg vs 110kg)</button>
+      <button class="btn-preset" onclick="applyPreset('bigHit')">💥 正面ビッグヒット</button>
+      <button class="btn-preset" onclick="applyPreset('armTackle')">❌ 手投げタックル (遠い踏み込み)</button>
+      <button class="btn-preset" onclick="applyPreset('highTackle')">⚠️ ハイタックル (高すぎ)</button>
+    </div>
+  </header>
+
+  <div class="stage-wrapper">
+    <canvas id="simCanvas" width="1000" height="420"></canvas>
+    <div class="hud-top">
+      <div class="hud-box" id="hud-left" style="border-left: 3px solid #ef4444;">
+        🔴 アタッカー運動量: <strong id="mom-atk">0</strong> kg·m/s
+      </div>
+      <div class="hud-box" id="hud-center">
+        📏 ゲインライン推移: <strong id="gain-val">0.00 m</strong>
+      </div>
+      <div class="hud-box" id="hud-right" style="border-right: 3px solid #3b82f6;">
+        🔵 タックラー運動量: <strong id="mom-def">0</strong> kg·m/s
+      </div>
+    </div>
+    <div class="result-banner" id="result-banner">
+      <div class="result-title" id="res-title">DOMINANT TACKLE!</div>
+      <div class="result-detail" id="res-detail">解説テキスト</div>
+    </div>
+  </div>
+
+  <div class="action-bar">
+    <button class="btn-main" id="btn-start">⚡ タックル開始！（シミュレーション実行）</button>
+    <div class="toggle-group">
+      <label><input type="checkbox" id="chk-slow"> 🐢 スロー再生 (0.25x)</label>
+      <label><input type="checkbox" id="chk-vec" checked> 📐 重心＆ベクトル表示</label>
+    </div>
+  </div>
+
+  <div class="controls-grid">
+    <!-- アタッカー設定 -->
+    <div class="card attacker">
+      <h3><span>🔴 ボールキャリア (左)</span></h3>
+      <div class="control-row">
+        <label>身長 <span class="val" id="val-atk-h">180 cm</span></label>
+        <input type="range" id="atk-h" min="155" max="205" value="180">
+      </div>
+      <div class="control-row">
+        <label>体重 <span class="val" id="val-atk-w">95 kg</span></label>
+        <input type="range" id="atk-w" min="50" max="135" value="95">
+      </div>
+      <div class="control-row">
+        <label>突進スピード <span class="val" id="val-atk-s">7.5 m/s</span></label>
+        <input type="range" id="atk-s" min="4.0" max="10.0" step="0.5" value="7.5">
+      </div>
+      <div class="control-row">
+        <label>ラン姿勢（前傾度） <span class="val" id="val-atk-p">標準</span></label>
+        <input type="range" id="atk-p" min="1" max="3" step="1" value="2">
+      </div>
+    </div>
+
+    <!-- タックラー設定 -->
+    <div class="card tackler">
+      <h3><span>🔵 タックラー (右)</span></h3>
+      <div class="control-row">
+        <label>身長 <span class="val" id="val-def-h">172 cm</span></label>
+        <input type="range" id="def-h" min="155" max="205" value="172">
+      </div>
+      <div class="control-row">
+        <label>体重 <span class="val" id="val-def-w">75 kg</span></label>
+        <input type="range" id="def-w" min="50" max="135" value="75">
+      </div>
+      <div class="control-row">
+        <label>出足スピード <span class="val" id="val-def-s">6.5 m/s</span></label>
+        <input type="range" id="def-s" min="3.0" max="9.5" step="0.5" value="6.5">
+      </div>
+      <div class="control-row">
+        <label>レッグドライブ出力 <span class="val" id="val-def-leg">80 %</span></label>
+        <input type="range" id="def-leg" min="20" max="100" step="10" value="80">
+      </div>
+    </div>
+
+    <!-- タックル技術設定 -->
+    <div class="card tech">
+      <h3><span>🎯 タックルスキル・ターゲット</span></h3>
+      <div class="control-row">
+        <label>ターゲットの高さ <span class="val" id="val-t-height">腰・コア (50%)</span></label>
+        <input type="range" id="t-height" min="15" max="95" value="48">
+      </div>
+      <div class="control-row">
+        <label>踏み込み位置 (パワーフット) <span class="val" id="val-t-dist">最適 (懐に深く入る)</span></label>
+        <input type="range" id="t-dist" min="10" max="100" value="30">
+      </div>
+      <div class="control-row">
+        <label>バインド（腕の結束力） <span class="val" id="val-t-bind">強固 (90%)</span></label>
+        <input type="range" id="t-bind" min="10" max="100" step="10" value="90">
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('simCanvas');
+const ctx = canvas.getContext('2d');
+
+// 地面のY座標とスケール (1m = 100px)
+const GROUND_Y = 355;
+const SCALE = 1.05; // 1cm = 1.05px
+
+let simState = 'PREVIEW'; // PREVIEW, RUNNING, CONTACT, SETTLED
+let animId = null;
+let contactX = 500;
+let particles = [];
+let cameraShake = 0;
+let outcomeData = null;
+
+// 選手オブジェクト構造
+let atk = {}, def = {};
+
+// UI要素の取得とイベント登録
+const inputs = ['atk-h','atk-w','atk-s','atk-p','def-h','def-w','def-s','def-leg','t-height','t-dist','t-bind'];
+inputs.forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    updateLabels();
+    if (simState !== 'RUNNING' && simState !== 'CONTACT') initPreview();
+  });
+});
+
+document.getElementById('chk-vec').addEventListener('change', () => {
+  if (simState === 'PREVIEW' || simState === 'SETTLED') drawScene();
+});
+
+function getParams() {
+  return {
+    atkH: +document.getElementById('atk-h').value,
+    atkW: +document.getElementById('atk-w').value,
+    atkS: +document.getElementById('atk-s').value,
+    atkP: +document.getElementById('atk-p').value, // 1:低い, 2:標準, 3:高い
+    defH: +document.getElementById('def-h').value,
+    defW: +document.getElementById('def-w').value,
+    defS: +document.getElementById('def-s').value,
+    defLeg: +document.getElementById('def-leg').value / 100,
+    tHeight: +document.getElementById('t-height').value / 100, // 0.15(足首) ~ 0.95(頭)
+    tDist: +document.getElementById('t-dist').value, // 10(深すぎ) ~ 30(最適) ~ 100(遠い)
+    tBind: +document.getElementById('t-bind').value / 100
+  };
+}
+
+function updateLabels() {
+  const p = getParams();
+  document.getElementById('val-atk-h').textContent = `${p.atkH} cm`;
+  document.getElementById('val-atk-w').textContent = `${p.atkW} kg`;
+  document.getElementById('val-atk-s').textContent = `${p.atkS.toFixed(1)} m/s`;
+  const pNames = {1: '低重心 (前傾)', 2: '標準', 3: '高重心 (直立気味)'};
+  document.getElementById('val-atk-p').textContent = pNames[p.atkP];
+
+  document.getElementById('val-def-h').textContent = `${p.defH} cm`;
+  document.getElementById('val-def-w').textContent = `${p.defW} kg`;
+  document.getElementById('val-def-s').textContent = `${p.defS.toFixed(1)} m/s`;
+  document.getElementById('val-def-leg').textContent = `${Math.round(p.defLeg*100)} %`;
+
+  let hLabel = '腰・コア';
+  if (p.tHeight < 0.35) hLabel = '膝〜スネ (ロー)';
+  else if (p.tHeight < 0.58) hLabel = '腰〜太もも (コア)';
+  else if (p.tHeight < 0.78) hLabel = '胸・ボール周辺 (ミドル)';
+  else hLabel = '肩〜頭部 (⚠️ハイ危険域)';
+  document.getElementById('val-t-height').textContent = `${hLabel} (${Math.round(p.tHeight*100)}%)`;
+
+  let dLabel = '最適 (パワーフット到達)';
+  if (p.tDist < 20) dLabel = '近すぎ (懐で詰まる)';
+  else if (p.tDist <= 42) dLabel = '最適 (懐に深く入る)';
+  else if (p.tDist <= 68) dLabel = 'やや遠い (伸び気味)';
+  else dLabel = '遠すぎ (手投げ・ダイブ)';
+  document.getElementById('val-t-dist').textContent = dLabel;
+
+  document.getElementById('val-t-bind').textContent = `${Math.round(p.tBind*100)} %`;
+
+  // 運動量表示
+  document.getElementById('mom-atk').textContent = Math.round(p.atkW * p.atkS);
+  document.getElementById('mom-def').textContent = Math.round(p.defW * p.defS);
+}
+
+// プリセット適用
+window.applyPreset = function(type) {
+  if (type === 'giantKilling') {
+    // 70kgの小柄な選手が110kgの巨漢を低いロータックルで仕留める
+    setVal('atk-h', 192); setVal('atk-w', 110); setVal('atk-s', 8.0); setVal('atk-p', 3);
+    setVal('def-h', 168); setVal('def-w', 70);  setVal('def-s', 7.0); setVal('def-leg', 90);
+    setVal('t-height', 30); setVal('t-dist', 28); setVal('t-bind', 90);
+  } else if (type === 'bigHit') {
+    // 同格のハードヒッター同士、コアへの完璧なスマッシュ
+    setVal('atk-h', 180); setVal('atk-w', 92); setVal('atk-s', 7.0); setVal('atk-p', 2);
+    setVal('def-h', 182); setVal('def-w', 98); setVal('def-s', 8.5); setVal('def-leg', 100);
+    setVal('t-height', 50); setVal('t-dist', 30); setVal('t-bind', 100);
+  } else if (type === 'armTackle') {
+    // 踏み込みが遠く、バインドも弱い手投げタックルで弾かれる
+    setVal('atk-h', 182); setVal('atk-w', 95); setVal('atk-s', 8.5); setVal('atk-p', 1);
+    setVal('def-h', 175); setVal('def-w', 80); setVal('def-s', 5.5); setVal('def-leg', 40);
+    setVal('t-height', 65); setVal('t-dist', 85); setVal('t-bind', 30);
+  } else if (type === 'highTackle') {
+    // ターゲットが高すぎて反則＆押し負け
+    setVal('atk-h', 178); setVal('atk-w', 88); setVal('atk-s', 7.5); setVal('atk-p', 2);
+    setVal('def-h', 185); setVal('def-w', 90); setVal('def-s', 7.0); setVal('def-leg', 70);
+    setVal('t-height', 88); setVal('t-dist', 40); setVal('t-bind', 60);
+  }
+  updateLabels();
+  initPreview();
+};
+
+function setVal(id, v) { document.getElementById(id).value = v; }
+
+// プレイヤーの初期状態生成
+function createPlayers() {
+  const p = getParams();
+  contactX = 500;
+  
+  // アタッカー姿勢角 (前傾度: 1=深い前傾0.45rad, 2=0.28rad, 3=0.12rad)
+  const atkLean = p.atkP === 1 ? 0.45 : (p.atkP === 2 ? 0.28 : 0.12);
+  
+  atk = {
+    x: 230, y: GROUND_Y,
+    vx: p.atkS * 32, vy: 0,
+    h: p.atkH * SCALE, w: p.atkW,
+    angle: atkLean, // 正: 右(前)への前傾
+    omega: 0,       // 角速度
+    phase: 0,
+    color: '#ef4444',
+    cogRatio: p.atkP === 1 ? 0.46 : (p.atkP === 2 ? 0.53 : 0.58)
+  };
+
+  // タックラーの構え高さをターゲット高さに連動させる
+  const defLean = -0.35 - (1 - p.tHeight) * 0.45; // 負: 左(前)への前傾
+  def = {
+    x: 770, y: GROUND_Y,
+    vx: -p.defS * 32, vy: 0,
+    h: p.defH * SCALE, w: p.defW,
+    angle: defLean,
+    omega: 0,
+    phase: Math.PI,
+    color: '#3b82f6',
+    targetRatio: p.tHeight,
+    stepDist: p.tDist
+  };
+}
+
+function initPreview() {
+  if (animId) cancelAnimationFrame(animId);
+  simState = 'PREVIEW';
+  document.getElementById('result-banner').style.display = 'none';
+  document.getElementById('gain-val').textContent = '0.00 m';
+  document.getElementById('gain-val').style.color = '#f8fafc';
+  particles = [];
+  createPlayers();
+  // プレビュー時は中央付近で向かい合わせる
+  atk.x = 435;
+  def.x = 565 + (def.stepDist - 30) * 0.6;
+  drawScene();
+}
+
+// 衝突時の物理計算（運動量・トルク・踏み込み効率）
+function resolveCollisionPhysics() {
+  const p = getParams();
+  contactX = (atk.x + def.x) / 2;
+
+  // 1. 踏み込み距離による力の伝達効率 (最適=25~40)
+  let distEfficiency = 1.0;
+  if (p.tDist > 40) {
+    // 遠すぎると急激にパワーロス（手投げ）
+    distEfficiency = Math.max(0.18, 1.0 - (p.tDist - 40) / 70);
+  } else if (p.tDist < 22) {
+    // 近すぎると懐で詰まって75%に低下
+    distEfficiency = 0.72 + (p.tDist / 22) * 0.28;
+  }
+
+  // 2. 重心高の比較と回転トルク（てこの原理）
+  // アタッカーの実効重心高 (地面からの高さ px)
+  const atkCogY = atk.h * atk.cogRatio * Math.cos(atk.angle * 0.6);
+  // タックラーのヒットポイント高 (地面からの高さ px)
+  const hitY = atk.h * p.tHeight * Math.cos(atk.angle * 0.5);
+
+  // モーメントアーム: 正なら重心より下を突いた（相手を前に回転させる）、負なら重心より上
+  const leverArm = (atkCogY - hitY) / atk.h; // -0.4 ~ +0.35 程度
+
+  // 3. 運動量計算 (kg * m/s)
+  const momAtk = p.atkW * p.atkS;
+  const momDef = p.defW * p.defS * distEfficiency * (0.65 + 0.35 * p.defLeg);
+
+  // 合成速度 (運動量保存則ベース + レッグドライブ補正)
+  const totalMass = p.atkW + p.defW;
+  let combinedVx = ((momAtk - momDef * 1.15) / totalMass) * 28;
+
+  // 4. 判定ロジック
+  const isHighTackle = p.tHeight >= 0.80;
+  
+  // ロータックルの成功補正（重心より十分低く、バインドと踏み込みが良い場合、足の推進力を奪う）
+  const isLowCut = (leverArm > 0.12) && (distEfficiency > 0.65) && (p.tBind >= 0.5);
+  
+  // アームタックルによるブレイク（すり抜け）判定
+  const isBrokenTackle = (distEfficiency < 0.48 && momAtk > momDef * 0.85) || 
+                         (p.tBind < 0.4 && momAtk > momDef * 1.05) ||
+                         (leverArm < -0.15 && momAtk > momDef * 1.25);
+
+  if (isHighTackle) {
+    // ハイタックル：相手は後ろにのけぞるか、危険な角度で倒れる
+    atk.vx = combinedVx * 0.7;
+    def.vx = combinedVx * 0.7;
+    atk.omega = -0.06; // 後ろにのけぞる
+    def.omega = 0.04;
+    outcomeData = {
+      title: '⚠️ HIGH TACKLE! (ペナルティ)',
+      color: '#f59e0b',
+      detail: `ヒット位置が肩〜頭部（高さ${Math.round(p.tHeight*100)}%）に入り危険なプレーと判定されました。重心より高いため衝撃も逃げてしまいます。`,
+      broken: false
+    };
+  } else if (isBrokenTackle) {
+    // タックル失敗（弾かれる・手投げ突破）
+    atk.vx = p.atkS * 20; // 減速しつつ突破継続
+    atk.omega = 0.012;
+    def.vx = p.atkS * 14; // タックラーが後方に吹き飛ばされる
+    def.vy = -5;
+    def.omega = 0.09; // 仰向けに吹っ飛ぶ
+    outcomeData = {
+      title: '❌ MISSED TACKLE! (突破)',
+      color: '#ef4444',
+      detail: p.tDist > 55 
+        ? `踏み込みが遠すぎたため「手投げ」になり、${p.atkW}kgの突進力（${Math.round(momAtk)} kg·m/s）に弾き飛ばされました。パワーフットを相手の近くまで踏み込む必要があります。`
+        : `ヒット位置が高くバインドが甘いため、重心の低いアタッカーに押し切られました。`,
+      broken: true
+    };
+  } else if (isLowCut) {
+    // ロータックル（ジャイアントキリング含む）
+    // 前に倒れ込みながら回転するため、少し前に進んでから地面に落ちる
+    atk.vx = Math.max(-40, combinedVx * 0.45);
+    def.vx = atk.vx;
+    atk.vy = -4;
+    atk.omega = 0.085 + leverArm * 0.15; // 強烈な前方回転トルク！
+    def.omega = -0.045;
+    outcomeData = {
+      title: momAtk > momDef * 1.15 ? '🔥 GIANT KILLING! (見事なロータックル)' : '✅ NICE LOW TACKLE! (完全ストップ)',
+      color: '#22c55e',
+      detail: `相手の重心より低い位置を正確に刈り取り、回転トルク（てこの原理）で足を地面から浮かせて前進を止めました！体格差を技術で覆す理想的なタックルです。`,
+      broken: false
+    };
+  } else if (combinedVx <= -15) {
+    // ビッグヒット（仰向けに押し戻す）
+    atk.vx = combinedVx * 1.15;
+    def.vx = combinedVx * 1.15;
+    atk.vy = -6;
+    def.vy = -3;
+    atk.omega = -0.075; // アタッカーが後ろにひっくり返る
+    def.omega = -0.055;
+    outcomeData = {
+      title: '💥 DOMINANT BIG HIT!! (完勝)',
+      color: '#38bdf8',
+      detail: `深い踏み込み（伝達効率${Math.round(distEfficiency*100)}%）とレッグドライブにより、アタッカーをゲインライン後方へ豪快に押し戻しました！`,
+      broken: false
+    };
+  } else {
+    // 押し込まれながらもバインドして倒す（受動的なタックル成功）
+    atk.vx = combinedVx * 0.85;
+    def.vx = combinedVx * 0.85;
+    atk.omega = 0.055;
+    def.omega = 0.065;
+    outcomeData = {
+      title: '⚖️ TACKLE COMPLETED (やや押し込まれ)',
+      color: '#a855f7',
+      detail: `運動量差でゲインラインを少し越えられましたが、粘り強いバインド（${Math.round(p.tBind*100)}%）で離さずグラウンドへ倒し切りました。`,
+      broken: false
+    };
+  }
+
+  // 衝撃パーティクルの生成
+  cameraShake = Math.min(18, (momAtk + momDef) / 90);
+  const hitScreenY = GROUND_Y - hitY;
+  for (let i = 0; i < 35; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const spd = 2 + Math.random() * 9;
+    particles.push({
+      x: contactX, y: hitScreenY,
+      vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 2,
+      life: 1.0,
+      color: i % 3 === 0 ? '#38bdf8' : (i % 2 === 0 ? '#facc15' : '#4ade80'),
+      size: 2 + Math.random() * 4
+    });
+  }
+}
+
+// シミュレーション開始
+document.getElementById('btn-start').addEventListener('click', () => {
+  if (animId) cancelAnimationFrame(animId);
+  document.getElementById('result-banner').style.display = 'none';
+  particles = [];
+  createPlayers();
+  simState = 'RUNNING';
+  lastTime = performance.now();
+  animId = requestAnimationFrame(loop);
+});
+
+let lastTime = 0;
+function loop(now) {
+  const rawDt = Math.min(0.033, (now - lastTime) / 1000);
+  lastTime = now;
+  const isSlow = document.getElementById('chk-slow').checked;
+  const dt = rawDt * (isSlow ? 0.25 : 1.0);
+  const timeScale = isSlow ? 0.25 : 1.0;
+
+  if (simState === 'RUNNING') {
+    atk.x += atk.vx * dt;
+    def.x += def.vx * dt;
+    atk.phase += dt * 18;
+    def.phase += dt * 18;
+
+    // 踏み込み距離に応じた接触判定
+    const triggerGap = 35 + (def.stepDist - 30) * 0.45;
+    if (def.x - atk.x <= triggerGap) {
+      simState = 'CONTACT';
+      resolveCollisionPhysics();
+    }
+  } else if (simState === 'CONTACT') {
+    // 位置と回転の更新
+    atk.x += atk.vx * dt;
+    def.x += def.vx * dt;
+    atk.y = Math.min(GROUND_Y, atk.y + atk.vy * timeScale);
+    def.y = Math.min(GROUND_Y, def.y + def.vy * timeScale);
+    atk.vy += 0.45 * timeScale;
+    def.vy += 0.45 * timeScale;
+
+    // 地面摩擦による減衰
+    const friction = outcomeData.broken ? 0.985 : 0.94;
+    atk.vx *= Math.pow(friction, timeScale);
+    def.vx *= Math.pow(friction, timeScale);
+
+    // 角度の更新（最大約85度で地面に接地）
+    atk.angle += atk.omega * timeScale;
+    def.angle += def.omega * timeScale;
+
+    if (Math.abs(atk.angle) > 1.42) {
+      atk.angle = Math.sign(atk.angle) * 1.42;
+      atk.omega = 0;
+      atk.vx *= 0.85;
+      if (!outcomeData.broken) def.vx *= 0.85;
+    }
+    if (Math.abs(def.angle) > 1.42) {
+      def.angle = Math.sign(def.angle) * 1.42;
+      def.omega = 0;
+      def.vx *= 0.85;
+    }
+
+    // ゲインライン推移のリアルタイム更新 (100px = 1.0m)
+    const gainMeters = (atk.x - contactX) / 100;
+    const gainEl = document.getElementById('gain-val');
+    gainEl.textContent = `${gainMeters >= 0 ? '+' : ''}${gainMeters.toFixed(2)} m`;
+    gainEl.style.color = gainMeters <= 0 ? '#38bdf8' : '#ef4444';
+
+    // 停止判定
+    if ((Math.abs(atk.vx) < 4 && Math.abs(atk.omega) === 0) || atk.x > 930 || atk.x < 70) {
+      simState = 'SETTLED';
+      showBanner();
+    }
+  }
+
+  // パーティクル更新
+  particles.forEach(pt => {
+    pt.x += pt.vx * timeScale;
+    pt.y += pt.vy * timeScale;
+    pt.vy += 0.25 * timeScale;
+    pt.life -= 0.025 * timeScale;
+  });
+  particles = particles.filter(pt => pt.life > 0);
+  if (cameraShake > 0) cameraShake *= 0.88;
+
+  drawScene();
+
+  if (simState === 'RUNNING' || simState === 'CONTACT' || particles.length > 0) {
+    animId = requestAnimationFrame(loop);
+  }
+}
+
+function showBanner() {
+  if (!outcomeData) return;
+  const banner = document.getElementById('result-banner');
+  const title = document.getElementById('res-title');
+  const detail = document.getElementById('res-detail');
+  title.textContent = outcomeData.title;
+  title.style.color = outcomeData.color;
+  banner.style.borderColor = outcomeData.color;
+  detail.textContent = outcomeData.detail;
+  banner.style.display = 'block';
+}
+
+// 画面描画
+function drawScene() {
+  ctx.save();
+  if (cameraShake > 0.5) {
+    ctx.translate((Math.random()-0.5)*cameraShake, (Math.random()-0.5)*cameraShake);
+  }
+
+  // 背景（夜間のスタジアム風グラデーション）
+  const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+  grad.addColorStop(0, '#090d16');
+  grad.addColorStop(1, '#1e293b');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, GROUND_Y);
+
+  // 芝生グラウンド
+  ctx.fillStyle = '#14532d';
+  ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+  // 芝のストライプ
+  ctx.fillStyle = '#166534';
+  for (let x = 0; x < canvas.width; x += 100) {
+    if ((x / 100) % 2 === 0) ctx.fillRect(x, GROUND_Y, 100, canvas.height - GROUND_Y);
+  }
+  // 白線
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, GROUND_Y); ctx.lineTo(canvas.width, GROUND_Y);
+  ctx.stroke();
+
+  // ゲインライン（接触地点）の描画
+  ctx.save();
+  ctx.setLineDash([8, 6]);
+  ctx.strokeStyle = '#facc15';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(contactX, 50); ctx.lineTo(contactX, GROUND_Y + 30);
+  ctx.stroke();
+  ctx.fillStyle = '#facc15';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('GAIN LINE (接触地点)', contactX, 42);
+  ctx.restore();
+
+  // 2人の選手を描画
+  drawPlayer(atk, true);
+  drawPlayer(def, false);
+
+  // 重心＆ベクトル表示
+  if (document.getElementById('chk-vec').checked) {
+    drawVectors();
+  }
+
+  // パーティクル描画
+  particles.forEach(pt => {
+    ctx.globalAlpha = Math.max(0, pt.life);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI*2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1.0;
+
+  ctx.restore();
+}
+
+// 多関節ラグビー選手の描画関数
+function drawPlayer(pl, isAttacker) {
+  ctx.save();
+  ctx.translate(pl.x, pl.y);
+
+  // 体重に応じた体の厚み
+  const thickness = 11 + (pl.w - 50) * 0.14;
+  const h = pl.h;
+  const dir = isAttacker ? 1 : -1;
+
+  // 股関節（ヒップ）を回転の中心にする
+  const hipH = h * 0.48;
+  // 倒れたときに体が地面にめり込まないよう高さを補正
+  const currentHipY = -hipH * Math.max(0.25, Math.cos(pl.angle * 0.85));
+
+  // 脚のアニメーション（走行中 or 踏ん張り）
+  const stride = Math.sin(pl.phase) * 22;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // 奥の脚
+  ctx.strokeStyle = isAttacker ? '#991b1b' : '#1e40af';
+  ctx.lineWidth = thickness * 0.75;
+  ctx.beginPath();
+  ctx.moveTo(0, currentHipY);
+  ctx.lineTo(-stride * 0.5 - dir * 8, currentHipY * 0.45);
+  ctx.lineTo(-stride - dir * 18, -4);
+  ctx.stroke();
+
+  // 手前の脚（パワーフット）
+  ctx.strokeStyle = '#f8fafc'; // ソックス・脚
+  ctx.lineWidth = thickness * 0.8;
+  ctx.beginPath();
+  ctx.moveTo(0, currentHipY);
+  const frontFootX = simState === 'PREVIEW' && !isAttacker 
+    ? -dir * (10 - (pl.stepDist - 30) * 0.4) 
+    : stride + dir * 14;
+  ctx.lineTo(frontFootX * 0.6, currentHipY * 0.48);
+  ctx.lineTo(frontFootX, -4);
+  ctx.stroke();
+
+  // 上半身の回転座標系
+  ctx.translate(0, currentHipY);
+  ctx.rotate(pl.angle);
+
+  // パンツ（腰）
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.arc(0, 0, thickness * 0.85, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 胴体（ジャージ）
+  const torsoLen = h * 0.34;
+  ctx.strokeStyle = pl.color;
+  ctx.lineWidth = thickness * 1.45;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, -torsoLen);
+  ctx.stroke();
+
+  // 背番号・ストライプ装飾
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(-thickness*0.6, -torsoLen*0.55);
+  ctx.lineTo(thickness*0.6, -torsoLen*0.55);
+  ctx.stroke();
+
+  // 頭部（ヘッドギア風）
+  const headR = h * 0.075;
+  ctx.fillStyle = '#fde047';
+  ctx.beginPath();
+  ctx.arc(dir * 4, -torsoLen - headR * 1.1, headR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // 腕とラグビーボール
+  ctx.strokeStyle = pl.color;
+  ctx.lineWidth = thickness * 0.65;
+  ctx.beginPath();
+  ctx.moveTo(0, -torsoLen * 0.85);
+  if (isAttacker) {
+    // ボールを抱える腕
+    ctx.lineTo(dir * 18, -torsoLen * 0.45);
+    ctx.lineTo(dir * 26, -torsoLen * 0.65);
+    ctx.stroke();
+    // ラグビーボール描画
+    ctx.save();
+    ctx.translate(dir * 24, -torsoLen * 0.58);
+    ctx.rotate(0.4);
+    ctx.fillStyle = '#d97706';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 13, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    // タックラーのバインドする腕
+    const reach = 26 + (pl.stepDist - 30) * 0.25;
+    ctx.lineTo(dir * (reach * 0.6), -torsoLen * 0.7);
+    ctx.lineTo(dir * reach, -torsoLen * 0.9);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// 重心（COG）とターゲット・力ベクトルの可視化
+function drawVectors() {
+  const p = getParams();
+  // アタッカーの重心位置
+  const cogY = GROUND_Y - atk.h * atk.cogRatio * Math.cos(atk.angle * 0.6);
+  const cogX = atk.x + Math.sin(atk.angle) * (atk.h * 0.2);
+
+  // 重心マーカー
+  ctx.fillStyle = '#facc15';
+  ctx.beginPath();
+  ctx.arc(cogX, cogY, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = '#fef08a';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('重心(COG)', cogX - 28, cogY - 12);
+
+  // プレビューまたは接触前のターゲットライン表示
+  if (simState === 'PREVIEW' || simState === 'RUNNING') {
+    const targetY = GROUND_Y - atk.h * p.tHeight * Math.cos(atk.angle * 0.5);
+    const isHigh = p.tHeight >= 0.80;
+    ctx.strokeStyle = isHigh ? '#ef4444' : '#38bdf8';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(def.x - 15, targetY);
+    ctx.lineTo(atk.x + 15, targetY);
+    ctx.stroke();
+
+    // 矢印先端
+    ctx.fillStyle = isHigh ? '#ef4444' : '#38bdf8';
+    ctx.beginPath();
+    ctx.moveTo(atk.x + 10, targetY);
+    ctx.lineTo(atk.x + 22, targetY - 6);
+    ctx.lineTo(atk.x + 22, targetY + 6);
+    ctx.fill();
+
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(isHigh ? '⚠️ 危険(ハイ)' : '🎯 ヒット高', (atk.x + def.x)/2 - 25, targetY - 10);
+  }
+}
+
+// 初期起動
+updateLabels();
+initPreview();
+</script>
+</body>
+</html>
